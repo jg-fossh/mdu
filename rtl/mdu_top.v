@@ -22,30 +22,33 @@ module mdu_top #(
   // Internal Signals Declarations
   ///////////////////////////////////////////////////////////////////////////////
   // Multiplication Process Signals
-  reg                           is_mul_r;
-  reg                           is_mulh_r;
-  reg  [(2*(P_DATA_MSB+1))-1:0] rd;
-  reg                           mul_done;
+  reg                    is_mul_r;
+  reg                    is_mulh_r;
+  reg  [(2*(WIDTH))-1:0] rd;
+  reg                    mul_done;
   // Multiplication Control Signals
   wire mul_en          = is_mul & i_mdu_valid;
   wire is_mul          = !i_mdu_op[2];
   wire unsign_mul      =  i_mdu_op[1]; 
   wire sign_unsign_mul =  i_mdu_op[0]; 
   wire is_mulh         = (|i_mdu_op) & is_mul;
-  // Multiplication Data Muxes 
-  wire [P_DATA_MSB+1:0] rdata_a = unsign_mul ? (
-                                    sign_unsign_mul ? $unsigned(i_mdu_rs1) : $signed({i_mdu_rs1[P_DATA_MSB],i_mdu_rs1})) :
-                                    $signed(i_mdu_rs1);
-  wire [P_DATA_MSB+1:0] rdata_b = unsign_mul ? $unsigned(i_mdu_rs2) : $signed(i_mdu_rs2);
-  wire [P_DATA_MSB:0]   mul_rd  = is_mulh ? rd[(2*(P_DATA_MSB+1))-1:P_DATA_MSB+1] : rd[P_DATA_MSB:0];
+  // Multiplication Inputs Data Muxes 
+  wire [WIDTH:0] rdata_a = unsign_mul ? (
+                             sign_unsign_mul ? $unsigned(i_mdu_rs1) : 
+                                               $signed({i_mdu_rs1[P_DATA_MSB],i_mdu_rs1})
+                             ) : 
+                             $signed(i_mdu_rs1);
+  wire [WIDTH:0] rdata_b = unsign_mul ? $unsigned(i_mdu_rs2) : $signed(i_mdu_rs2);
+  // Resulting Product
+  wire [P_DATA_MSB:0] mul_rd  = is_mulh ? rd[(2*(WIDTH))-1:WIDTH] : rd[P_DATA_MSB:0];
 
   // Division Process Signals
-  reg                          outsign;
-  reg [P_DATA_MSB:0]           dividend;
-  reg [P_DATA_MSB:0]           quotient;  
-  reg [P_DATA_MSB:0]           quotient_msk;
-  reg [P_DATA_MSB:0]           div_rd;
-  reg [(2*(P_DATA_MSB+1))-2:0] divisor;
+  reg                   outsign;
+  reg [P_DATA_MSB:0]    dividend;
+  reg [P_DATA_MSB:0]    quotient;  
+  reg [P_DATA_MSB:0]    quotient_msk;
+  reg [P_DATA_MSB:0]    div_rd;
+  reg [(2*(WIDTH))-2:0] divisor;
   // Division Control Signals
   reg  div_ready;
   reg  running;
@@ -61,7 +64,7 @@ module mdu_top #(
   /////////////////////////////////////////////////////////////////////////////
   // Process     : Multiplication Process
   // Description : Generic code that modern synthesizers infer as DSP blocks.
-  //  and generates an operation done strobe.
+  //               and generates an operation done strobe.
   /////////////////////////////////////////////////////////////////////////////
   always @(posedge i_clk) begin : multiplication_proc
     if (!i_rst & mul_en) begin
@@ -70,9 +73,9 @@ module mdu_top #(
   end // multiplication_proc
 
   /////////////////////////////////////////////////////////////////////////////
-  // Process     : Multiplication Process
-  // Description : Generic code that modern synthesizers infer as DSP blocks.
-  //  and generates an operation done strobe.
+  // Process     : Multiplication Handshake Process
+  // Description : Keeps the handshake signals align with the multilication
+  //               data, keeps the pipeline in-sync.
   /////////////////////////////////////////////////////////////////////////////
   always @(posedge i_clk) begin : multiplication_hndshk_proc
     if (i_rst) begin
