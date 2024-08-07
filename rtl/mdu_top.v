@@ -5,7 +5,8 @@
 
 /* Multiplication & Division Unit */
 module mdu_top #(
-  parameter integer P_DATA_MSB = 31
+  parameter integer WIDTH      = 32,
+  parameter integer P_DATA_MSB = WIDTH-1
 )(
   input                 i_clk,  
   input                 i_rst,
@@ -64,10 +65,10 @@ module mdu_top #(
   /////////////////////////////////////////////////////////////////////////////
   always @(posedge i_clk) begin : multiplication_proc
     if (!i_rst & mul_en) begin
-      rd <= rdata_a * rdata_b;
+      rd <= $signed(rdata_a) * $signed(rdata_b);
     end
   end // multiplication_proc
-  
+
   /////////////////////////////////////////////////////////////////////////////
   // Process     : Multiplication Process
   // Description : Generic code that modern synthesizers infer as DSP blocks.
