@@ -4,80 +4,92 @@
 `default_nettype none
 
 /* Multiplication & Division Unit */
-module mdu_top
-#(
-  parameter WIDTH = 32
+module mdu_top #(
+  parameter integer P_DATA_MSB = 31
 )(
-  input  wire             i_clk,  
-  input  wire             i_rst,
-  input  wire [WIDTH-1:0] i_mdu_rs1,
-  input  wire [WIDTH-1:0] i_mdu_rs2,
-  input  wire [2:0]       i_mdu_op,
-  input  wire             i_mdu_valid,
-  output wire             o_mdu_ready,
-  output wire [WIDTH-1:0] o_mdu_rd
+  input                 i_clk,  
+  input                 i_rst,
+  input  [P_DATA_MSB:0] i_mdu_rs1,
+  input  [P_DATA_MSB:0] i_mdu_rs2,
+  input  [2:0]          i_mdu_op,
+  input                 i_mdu_valid,
+  output                o_mdu_ready,
+  output [P_DATA_MSB:0] o_mdu_rd
 );
 
-  wire valid  = i_mdu_valid;
-
-  // START MUL //
-  reg  [WIDTH:0] rdata_a;
-  reg  [WIDTH:0] rdata_b;
-  reg  [(2*WIDTH)-1:0] rd;
-  wire [WIDTH-1:0] mul_rd; 
-
-  // Control Signals
-  reg  mul_en;
-  reg  mul_done;
-  wire mul_ready;
+  ///////////////////////////////////////////////////////////////////////////////
+  // Internal Signals Declarations
+  ///////////////////////////////////////////////////////////////////////////////
+  // Multiplication Process Signals
+  reg                           is_mul_r;
+  reg                           is_mulh_r;
+  reg  [(2*(P_DATA_MSB+1))-1:0] rd;
+  reg                           mul_done;
+  // Multiplication Control Signals
+  wire mul_en          = is_mul & i_mdu_valid;
   wire is_mul          = !i_mdu_op[2];
   wire unsign_mul      =  i_mdu_op[1]; 
   wire sign_unsign_mul =  i_mdu_op[0]; 
   wire is_mulh         = (|i_mdu_op) & is_mul;
+  // Multiplication Data Muxes 
+  wire [P_DATA_MSB+1:0] rdata_a = unsign_mul ? (
+                                    sign_unsign_mul ? $unsigned(i_mdu_rs1) : $signed({i_mdu_rs1[P_DATA_MSB],i_mdu_rs1})) :
+                                    $signed(i_mdu_rs1);
+  wire [P_DATA_MSB+1:0] rdata_b = unsign_mul ? $unsigned(i_mdu_rs2) : $signed(i_mdu_rs2);
+  wire [P_DATA_MSB:0]   mul_rd  = is_mulh ? rd[(2*(P_DATA_MSB+1))-1:P_DATA_MSB+1] : rd[P_DATA_MSB:0];
 
-  always @(posedge i_clk) begin
-    if (valid & is_mul) begin
-      mul_en <= valid;
-      if (unsign_mul) begin
-        /* verilator lint_off WIDTH */
-        rdata_a <= sign_unsign_mul ? $unsigned(i_mdu_rs1) : $signed({i_mdu_rs1[31],i_mdu_rs1}); //$signed(i_mdu_rs1);
-        rdata_b <= $unsigned(i_mdu_rs2);
-      end else begin
-        rdata_a <= $signed(i_mdu_rs1);
-        rdata_b <= $signed(i_mdu_rs2);
-      end
-    end else begin
-      mul_en <= 1'b0;
-    end
-  end
-
-  always @(posedge i_clk) begin
-    if (!i_rst & is_mul & mul_en) begin
-      rd <= $signed(rdata_a)*$signed(rdata_b);
-    end
-    mul_done <= mul_en;
-  end
-
-  assign mul_ready = mul_done & valid;
-  assign mul_rd = is_mulh ? rd[(2*WIDTH)-1:WIDTH] : rd[WIDTH-1:0];
-
-  // DIV STARTS //  
-  // Taken from picorv32 //
-  reg             outsign;
-  reg [WIDTH-1:0] dividend;
-  reg [WIDTH-1:0] quotient;  
-  reg [WIDTH-1:0] quotient_msk;
-  reg [WIDTH-1:0] div_rd;
-  reg [(2*WIDTH)-2:0] divisor;
-
+  // Division Process Signals
+  reg                          outsign;
+  reg [P_DATA_MSB:0]           dividend;
+  reg [P_DATA_MSB:0]           quotient;  
+  reg [P_DATA_MSB:0]           quotient_msk;
+  reg [P_DATA_MSB:0]           div_rd;
+  reg [(2*(P_DATA_MSB+1))-2:0] divisor;
+  // Division Control Signals
   reg  div_ready;
   reg  running;
-
-  wire is_div = i_mdu_op[2] & (!i_mdu_op[1]);
-  wire is_rem = i_mdu_op[2] & i_mdu_op[1];
+  wire is_div         = i_mdu_op[2] & (!i_mdu_op[1]);
+  wire is_rem         = i_mdu_op[2] & i_mdu_op[1];
   wire unsign_div_rem = i_mdu_op[0];
-  wire prep   = valid & (is_div | is_rem) & !running & !div_ready;	
+  wire prep           = i_mdu_valid & (is_div | is_rem) & !running & !div_ready;	
+
+  ///////////////////////////////////////////////////////////////////////////////
+  //            ********      Architecture Declaration      ********           //
+  ///////////////////////////////////////////////////////////////////////////////
+
+  /////////////////////////////////////////////////////////////////////////////
+  // Process     : Multiplication Process
+  // Description : Generic code that modern synthesizers infer as DSP blocks.
+  //  and generates an operation done strobe.
+  /////////////////////////////////////////////////////////////////////////////
+  always @(posedge i_clk) begin : multiplication_proc
+    if (!i_rst & mul_en) begin
+      rd <= rdata_a * rdata_b;
+    end
+  end // multiplication_proc
   
+  /////////////////////////////////////////////////////////////////////////////
+  // Process     : Multiplication Process
+  // Description : Generic code that modern synthesizers infer as DSP blocks.
+  //  and generates an operation done strobe.
+  /////////////////////////////////////////////////////////////////////////////
+  always @(posedge i_clk) begin : multiplication_hndshk_proc
+    if (i_rst) begin
+      is_mul_r  <= 1'b0;
+      is_mulh_r <= 1'b0;
+      mul_done  <= 1'b0;
+    end
+    else begin
+      is_mul_r  <= is_mul;
+      is_mulh_r <= is_mulh;
+      mul_done  <= mul_en;
+    end
+  end // multiplication_hndshk_proc
+
+  /////////////////////////////////////////////////////////////////////////////
+  // Process     : Division Process
+  // Description : Taken from picorv32.
+  /////////////////////////////////////////////////////////////////////////////
   always @(posedge i_clk) begin
     if (i_rst)  
       running <= 1'b0;
@@ -109,8 +121,8 @@ module mdu_top
     end
   end
 
-  assign o_mdu_ready = mul_ready | div_ready;
-  assign o_mdu_rd = is_mul ? mul_rd : div_rd;
+  assign o_mdu_ready = mul_done | div_ready;
+  assign o_mdu_rd    = is_mul ? mul_rd : div_rd;
 
 endmodule
 `default_nettype wire
