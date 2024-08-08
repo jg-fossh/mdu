@@ -43,19 +43,27 @@ module mdu_top #(
   wire [P_DATA_MSB:0] mul_rd  = is_mulh ? rd[(2*(WIDTH))-1:WIDTH] : rd[P_DATA_MSB:0];
 
   // Division Process Signals
+  reg [P_DATA_MSB:0]    divisor;
+  reg [2*WIDTH:0]       dividend;
   reg                   outsign;
-  reg [P_DATA_MSB:0]    dividend;
-  reg [P_DATA_MSB:0]    quotient;  
-  reg [P_DATA_MSB:0]    quotient_msk;
   reg [P_DATA_MSB:0]    div_rd;
-  reg [(2*(WIDTH))-2:0] divisor;
+  reg                   div_ready;
+  reg [$clog2(WIDTH):0] cntr;
+
   // Division Control Signals
-  reg  div_ready;
-  reg  running;
   wire is_div         = i_mdu_op[2] & (!i_mdu_op[1]);
   wire is_rem         = i_mdu_op[2] & i_mdu_op[1];
   wire unsign_div_rem = i_mdu_op[0];
-  wire prep           = i_mdu_valid & (is_div | is_rem) & !running & !div_ready;	
+  wire cntr_zero      = ~|cntr;
+  wire prep           = i_mdu_valid & (is_div | is_rem) & cntr_zero & !div_ready;	
+
+  wire [P_DATA_MSB:0] quotient       = dividend[P_DATA_MSB:0];
+  wire [WIDTH:0]      upper_dividend = dividend[2*WIDTH:WIDTH];
+  wire [P_DATA_MSB:0] remainder      = upper_dividend >> 1;
+  
+  wire [WIDTH:0] sub_result     = upper_dividend - divisor;
+  wire           sub_result_neg = sub_result[WIDTH];
+  
 
   ///////////////////////////////////////////////////////////////////////////////
   //            ********      Architecture Declaration      ********           //
@@ -92,39 +100,38 @@ module mdu_top #(
 
   /////////////////////////////////////////////////////////////////////////////
   // Process     : Division Process
-  // Description : Taken from picorv32.
+  // Description : Merged in from Altera's old cook book.
   /////////////////////////////////////////////////////////////////////////////
   always @(posedge i_clk) begin
-    if (i_rst)  
-      running <= 1'b0;
+    if (i_rst) begin
+      dividend <= 0;
+      divisor  <= 0;
+      outsign  <= 1'b0;
+      cntr     <= 0;
+    end
     else if (prep) begin
-      dividend <= (!unsign_div_rem & i_mdu_rs1[31]) ? -i_mdu_rs1 : i_mdu_rs1;
-      divisor  <= ((!unsign_div_rem & i_mdu_rs2[31]) ? -i_mdu_rs2 : i_mdu_rs2) << 31; 
-      outsign  <= (!unsign_div_rem & is_div & (i_mdu_rs1[31] != i_mdu_rs2[31]) & (|i_mdu_rs2)) 
-                   | (!unsign_div_rem & is_rem & i_mdu_rs1[31]);
-      quotient <= 32'b0;
-      quotient_msk <= 1 << 31;
-      running <= 1'b1;
+      dividend  <= {{WIDTH{1'b0}},i_mdu_rs1,1'b0};
+      divisor   <= i_mdu_rs2; 
+      outsign   <= (!unsign_div_rem & is_div & (i_mdu_rs1[31] ^ i_mdu_rs2[31]) & (|i_mdu_rs2)) |
+                   (!unsign_div_rem & is_rem & i_mdu_rs1[31]);
+      cntr      <= WIDTH;
       div_ready <= 1'b0;
-    end else if (!quotient_msk && running) begin
-      running   <= 1'b0;
+    end else if (cntr_zero) begin
       div_ready <= 1'b1;
       if (is_div) begin
         div_rd <= outsign ? -quotient : quotient;
       end else begin
-        div_rd <= outsign ? -dividend : dividend; 
+        div_rd <= outsign ? -remainder : remainder; 
       end
     end else begin
-      div_ready <= 1'b0; 
-      if (divisor <= dividend) begin
-	      dividend <= dividend - divisor;
-	      quotient <= quotient | quotient_msk;
-      end
-      divisor <= divisor >> 1;
-      quotient_msk <= quotient_msk >> 1;
+      div_ready <= 1'b0;
+			cntr      <= cntr - 1;
+			dividend  <= sub_result_neg ? {dividend[WIDTH+P_DATA_MSB:0],1'b0} :
+					                          {sub_result[P_DATA_MSB:0],quotient,1'b1};
     end
   end
 
+  //
   assign o_mdu_ready = mul_done | div_ready;
   assign o_mdu_rd    = is_mul ? mul_rd : div_rd;
 
